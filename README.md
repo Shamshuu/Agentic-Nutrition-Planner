@@ -201,6 +201,8 @@ Create a `.env` file in the project root:
 ```
 GROQ_API_KEY=your_groq_api_key_here
 GEMINI_API_KEY=your_gemini_api_key_here
+
+NOT MENTIIONED API KEYS DUE TO SECURITY ISSUES
 ```
 
 ---
@@ -283,4 +285,5 @@ This project demonstrates a **true agentic AI system** for healthcare and fitnes
 - Persistent memory
 - Constraint-aware planning
 - Human-in-the-loop refinement
+
 - Planned autonomy and real-world actions
