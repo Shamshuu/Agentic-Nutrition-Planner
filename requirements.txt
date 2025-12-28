@@ -1,0 +1,6 @@
+streamlit
+groq
+google-genai
+pillow
+python
+python-dotenv
