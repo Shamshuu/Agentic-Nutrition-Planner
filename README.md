@@ -275,6 +275,3 @@ This project demonstrates a **true agentic AI system** for healthcare and fitnes
 - Constraint-aware planning
 - Human-in-the-loop refinement
 - Planned autonomy and real-world actions
-
-
-
