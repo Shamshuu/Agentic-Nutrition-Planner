@@ -338,9 +338,15 @@ def detect_user_intent(user_message, chat_history, has_pending_plan):
         last_assistant_msg = chat_history[-2].get("content", "") if chat_history[-2].get("role") == "assistant" else ""
         if "how many days" in last_assistant_msg.lower():
             last_was_duration_question = True
+            
     
     intent_prompt = f"""
     You are an Intent Detection Agent for a Nutrition Planning System.
+    IMPORTANT RULE:
+    If the user message is a greeting, introduction, or small talk 
+    (e.g., "hi", "hello", "my name is X", "how are you"),
+    the intent MUST be "GENERAL_QUESTION".
+    DO NOT classify greetings as your actual task.
 
     CURRENT STATE:
     {state_context}
@@ -917,11 +923,13 @@ def generate_plan_workflow(email, age, weight, height, gender, act, goal, durati
 
         st.session_state['current_strategy'] = final_output
         st.session_state['total_budget'] = extracted_cost
-        st.session_state['agent_memory'].update({
-            "meal_plan": final_output,
+        st.session_state["agent_memory"]["tabs"]["tab1"].update({
+            "current_plan": final_plan,
             "plan_duration": duration,
-            "total_budget": extracted_cost
+            "budget": extracted_cost,
+            "last_feedback": feedback
         })
+        st.session_state["agent_memory"]["global"]["approved_plans"].append(final_plan)
 
     return final_output, final_cost
 
@@ -937,6 +945,24 @@ def refine_plan_with_feedback(current_plan, feedback_msg):
     Maintain the same structured format (Breakfast, Lunch, Dinner, Cost).
     """
     return run_agent("Manager Agent", "You are an adaptive nutritionist. Fix the plan based on feedback.", prompt)
+
+def build_chat_memory_context():
+    memory = st.session_state["agent_memory"]
+    active_tab = st.session_state.get("active_tab", "tab1")
+
+    tab_memory = memory["tabs"].get(active_tab, {})
+    global_memory = memory["global"]
+
+    context = f"""
+    === PRIMARY (TAB-SPECIFIC MEMORY) ===
+    {tab_memory}
+
+    === SECONDARY (GLOBAL MEMORY) ===
+    {global_memory}
+    """
+
+    return context
+
 
 def live_chat_reply(history, user_context):
     system_msg = (
@@ -1032,14 +1058,32 @@ if 'feedback_mode' not in st.session_state: st.session_state['feedback_mode'] = 
 if 'live_chat' not in st.session_state: st.session_state['live_chat'] = []
 
 # --- GLOBAL AGENT MEMORY ---
-if 'agent_memory' not in st.session_state:
-    st.session_state['agent_memory'] = {
-        "meal_plan": None,
-        "plan_duration": None,
-        "total_budget": None,
-        "carbon_report": None,
-        "carbon_metrics": None,
-        "food_diary": []
+if "agent_memory" not in st.session_state:
+    st.session_state["agent_memory"] = {
+        "global": {
+            "user_profile": {},
+            "approved_plans": [],
+            "preferences": [],
+            "constraints": [],
+            "long_term_goals": None
+        },
+        "tabs": {
+            "tab1": {   # Strategic Planner
+                "current_plan": None,
+                "plan_duration": None,
+                "budget": None,
+                "last_feedback": None
+            },
+            "tab2": {   # Visual Tracker
+                "food_diary": [],
+                "last_image_analysis": None
+            },
+            "tab3": {   # Carbon Footprint
+                "carbon_metrics": None,
+                "carbon_report": None,
+                "analysis_source": None
+            }
+        }
     }
 
 final_cost=0
@@ -1166,8 +1210,11 @@ else:
     st.caption(f"Multi-Agent System | {e_diet} | {e_cuisine} | {e_age} Years")
 
     tab1, tab2, tab3 = st.tabs(["🗓️ Strategic Planner", "📸 Visual Tracker", "🌍 Carbon Footprint"])
+    if "active_tab" not in st.session_state:
+        st.session_state["active_tab"] = "tab1"
 
     with tab1:
+        st.session_state["active_tab"] = "tab1"
         if not st.session_state['feedback_mode']:
             st.header("Generate Strategy")
             col1, col2 = st.columns(2)
@@ -1215,7 +1262,7 @@ else:
             st.session_state['feedback_mode'] = False
             
             # 5. RERUN to let the Main Display Block handle the rendering
-            # st.rerun()
+            st.rerun()
 
         
         # --- SINGLE SOURCE OF TRUTH FOR DISPLAYING PLANS ---
@@ -1309,6 +1356,35 @@ else:
                     feedback=feedback_msg,
                     previous_cost=previous_cost
                 )
+                
+            with st.container(border=True):
+                st.markdown("### 💰 Financial Forecast")
+
+                left, spacer, right = st.columns([2, 1, 2])
+
+                try:
+                    budget_str = str(st.session_state.get("total_budget", "0"))
+                    budget_clean = re.sub(r"[^\d.]", "", budget_str)
+                    total_cost = float(budget_clean) if budget_clean else 0.0
+                    duration = st.session_state.get("plan_duration", 1)
+
+                    if total_cost > 0:
+                        left.metric(
+                            "Total Cost",
+                            f"₹{total_cost:,.0f}"
+                        )
+
+                        right.metric(
+                            "Daily Average",
+                            f"₹{total_cost / duration:,.0f} / day"
+                        )
+                    else:
+                        left.metric("Total Cost", "₹--")
+                        right.metric("Daily Average", "₹--")
+
+                except Exception:
+                    left.metric("Total Cost", "₹--")
+                    right.metric("Daily Average", "₹--")
 
             # --- UPDATE STATE ---
             st.session_state['pending_plan'] = final_plan
@@ -1316,7 +1392,7 @@ else:
             st.session_state['feedback_mode'] = False
 
             st.success("✅ Plan regenerated based on your feedback.")
-            # st.rerun()
+            st.rerun()
 
     else:
         # Display Chat History
@@ -1365,6 +1441,35 @@ else:
                         )
                     status.update(label="✅ Strategy Ready!", state="complete", expanded=False)
                     
+                    with st.container(border=True):
+                        st.markdown("### 💰 Financial Forecast")
+
+                        left, spacer, right = st.columns([2, 1, 2])
+
+                        try:
+                            budget_str = str(st.session_state.get("total_budget", "0"))
+                            budget_clean = re.sub(r"[^\d.]", "", budget_str)
+                            total_cost = float(budget_clean) if budget_clean else 0.0
+                            duration = st.session_state.get("plan_duration", 1)
+
+                            if total_cost > 0:
+                                left.metric(
+                                    "Total Cost",
+                                    f"₹{total_cost:,.0f}"
+                                )
+
+                                right.metric(
+                                    "Daily Average",
+                                    f"₹{total_cost / duration:,.0f} / day"
+                                )
+                            else:
+                                left.metric("Total Cost", "₹--")
+                                right.metric("Daily Average", "₹--")
+
+                        except Exception:
+                            left.metric("Total Cost", "₹--")
+                            right.metric("Daily Average", "₹--")
+                    
                     # Store plan
                     st.session_state['pending_plan'] = final_plan
                     st.session_state['total_budget'] = cost
@@ -1372,14 +1477,12 @@ else:
                     st.session_state['feedback_mode'] = False
                     
                     st.session_state['live_chat'].append({"role": "assistant", "content": f"✅ I've created a new {duration}-day plan. Check the 'Proposed Strategy' section above."})
-                    # st.rerun()
-                    st.success("Plan generated and displayed above.")
+                    st.rerun()
                 else:
                     # No duration specified, ask for it
                     reply = "How many days should I plan for?"
                     st.session_state['live_chat'].append({"role": "assistant", "content": reply})
-                    # st.rerun()
-                    st.success("Asked for duration.")
+                    st.rerun()
             
             elif intent == "ANSWER_DURATION":
                 # User is answering a duration question
@@ -1396,20 +1499,47 @@ else:
                             )
                         status.update(label="✅ Strategy Finalized!", state="complete", expanded=False)
                         
+                        with st.container(border=True):
+                            st.markdown("### 💰 Financial Forecast")
+
+                            left, spacer, right = st.columns([2, 1, 2])
+
+                            try:
+                                budget_str = str(st.session_state.get("total_budget", "0"))
+                                budget_clean = re.sub(r"[^\d.]", "", budget_str)
+                                total_cost = float(budget_clean) if budget_clean else 0.0
+                                duration = st.session_state.get("plan_duration", 1)
+
+                                if total_cost > 0:
+                                    left.metric(
+                                        "Total Cost",
+                                        f"₹{total_cost:,.0f}"
+                                    )
+
+                                    right.metric(
+                                        "Daily Average",
+                                        f"₹{total_cost / duration:,.0f} / day"
+                                    )
+                                else:
+                                    left.metric("Total Cost", "₹--")
+                                    right.metric("Daily Average", "₹--")
+
+                            except Exception:
+                                left.metric("Total Cost", "₹--")
+                                right.metric("Daily Average", "₹--")
+                        
                         st.session_state['pending_plan'] = final_plan
                         st.session_state['total_budget'] = cost
                         st.session_state['plan_duration'] = duration
                         st.session_state['live_chat'].append({"role": "assistant", "content": "✅ Plan generated! You can review it above."})
-                        # st.rerun()
-                        st.success()
+                        st.rerun()
                     else:
                         raise ValueError("No duration extracted")
                 except:
                     reply = "I need a number (1-7). How many days?"
                     st.session_state['live_chat'].append({"role": "assistant", "content": reply})
-                    # st.rerun()
-                    st.success()
-            
+                    st.rerun()
+                                
             elif intent == "REGENERATE_PLAN":
                 # User wants to modify/regenerate the existing plan
                 if not has_pending_plan:
@@ -1437,6 +1567,35 @@ else:
                         )
                     status.update(label="✅ Plan Regenerated!", state="complete", expanded=False)
                     
+                    with st.container(border=True):
+                        st.markdown("### 💰 Financial Forecast")
+
+                        left, spacer, right = st.columns([2, 1, 2])
+
+                        try:
+                            budget_str = str(st.session_state.get("total_budget", "0"))
+                            budget_clean = re.sub(r"[^\d.]", "", budget_str)
+                            total_cost = float(budget_clean) if budget_clean else 0.0
+                            duration = st.session_state.get("plan_duration", 1)
+
+                            if total_cost > 0:
+                                left.metric(
+                                    "Total Cost",
+                                    f"₹{total_cost:,.0f}"
+                                )
+
+                                right.metric(
+                                    "Daily Average",
+                                    f"₹{total_cost / duration:,.0f} / day"
+                                )
+                            else:
+                                left.metric("Total Cost", "₹--")
+                                right.metric("Daily Average", "₹--")
+
+                        except Exception:
+                            left.metric("Total Cost", "₹--")
+                            right.metric("Daily Average", "₹--")
+                    
                     # Update the pending plan
                     st.session_state['pending_plan'] = final_plan
                     st.session_state['total_budget'] = cost
@@ -1447,7 +1606,7 @@ else:
                         "role": "assistant", 
                         "content": f"✅ I've regenerated your plan considering your feedback. Check the updated 'Proposed Strategy' section above."
                     })
-                    # st.rerun()
+                    st.rerun()
             
             # GENERAL_QUESTION or fallback
             if intent == "GENERAL_QUESTION":
@@ -1493,40 +1652,47 @@ else:
                 memory = st.session_state.get("agent_memory") or {}
                 carbon = memory.get("carbon_metrics") or {}
 
+                active_tab = st.session_state.get("active_tab", "tab1")
+                agent_memory = st.session_state.get("agent_memory", {})
+
+                global_mem = agent_memory.get("global", {})
+                tab_mem = agent_memory.get("tabs", {}).get(active_tab, {})
+                
                 user_context = f"""
                 USER PROFILE:
                 Age: {u_data[3]}
                 Weight: {u_data[6]} kg → Goal: {u_data[7]} kg
                 Diet: {u_data[10]}, Cuisine: {u_data[13]}
 
-                MEAL PLAN CONTEXT:
-                {memory.get("meal_plan", "No plan generated yet.")}
+                PRIMARY CONTEXT (ACTIVE TAB: {active_tab}):
+                {tab_mem if tab_mem else "No tab-specific context yet."}
 
-                PLAN DURATION:
-                {memory.get("plan_duration", "N/A")} days
+                SECONDARY CONTEXT (GLOBAL MEMORY):
+                {global_mem if global_mem else "No global memory yet."}
 
-                BUDGET:
-                ₹{memory.get("total_budget", "N/A")}
+                LEGACY CONTEXT (COMPATIBILITY):
+                Meal Plan:
+                {agent_memory.get("meal_plan", "No plan generated yet.")}
 
-                CARBON FOOTPRINT ANALYSIS:
-                CO₂ Emissions: {carbon.get("co2", "N/A")} kg CO2e
-                Sustainability Score: {carbon.get("score", "N/A")}
-                Sustainability Score: {carbon.get("score", "N/A")}
+                Budget:
+                ₹{agent_memory.get("total_budget", "N/A")}
 
-                ENVIRONMENT REPORT:
-                {memory.get("carbon_report", "No environmental analysis performed yet.")}
+                Carbon Analysis:
+                CO₂: {agent_memory.get("carbon_metrics", {}).get("co2", "N/A")}
+                Score: {agent_memory.get("carbon_metrics", {}).get("score", "N/A")}
 
-                FOOD DIARY (Visual Tracker - Recent Meals):
-                {recent_food_log}
+                Food Diary:
+                {agent_memory.get("food_diary", [])}
                 """
                 
                 # 5. Get Reply
                 bot_reply = live_chat_reply(st.session_state['live_chat'], user_context)
                 st.session_state['live_chat'].append({"role": "assistant", "content": bot_reply})
-                # st.rerun()
+                st.rerun()
             
 
     with tab2:
+        st.session_state["active_tab"] = "tab2"
         st.header("🍽️ Food Diary")
 
         # --- Upload image ---
@@ -1568,7 +1734,7 @@ else:
                     meal_co2 = estimate_food_carbon(analysis_result)
                     
                     # Update Agent Memory immediately so Chat can see it
-                    st.session_state["agent_memory"]["food_diary"].append({
+                    st.session_state["agent_memory"]["tabs"]["tab2"]["food_diary"].append({
                         "timestamp": datetime.datetime.now().isoformat(),
                         "analysis": analysis_result,
                         "co2": meal_co2
@@ -1589,6 +1755,7 @@ else:
 
 
     with tab3:
+        st.session_state["active_tab"] = "tab3"
         st.header("🌍 Ecological Impact Of Meal")
 
         analysis_mode = st.radio(
@@ -1638,9 +1805,10 @@ else:
                 clean_report = re.sub(r"###.*?###", "", eco_report).strip()
 
                 # --- STORE PERSISTENTLY ---
-                st.session_state['agent_memory'].update({
-                    "carbon_metrics": {"co2": est_co2, "score": sust_score, "source": analysis_mode},
-                    "carbon_report": clean_report
+                st.session_state["agent_memory"]["tabs"]["tab3"].update({
+                    "carbon_metrics": {"co2": est_co2, "score": sust_score},
+                    "carbon_report": clean_report,
+                    "analysis_source": analysis_mode
                 })
 
         # --- DISPLAY FROM MEMORY (Not just local variables) ---
