@@ -71,9 +71,9 @@ Manager Agent (Formatting & Validation)
         ↓
 Environmental Analyst (CO₂ & Sustainability)
         ↓
-Optional Action Triggers
-  ├─ Recipe Agent (web search & instructions)
-  └─ Ordering Agent (grocery platforms)
+Future Action Needed To Implement
+        ├─ Recipe Agent (web search & instructions)
+        └─ Ordering Agent (grocery platforms)
         ↓
 Persistent Memory (SQLite + Session State)
 ```
@@ -287,3 +287,4 @@ This project demonstrates a **true agentic AI system** for healthcare and fitnes
 - Human-in-the-loop refinement
 
 - Planned autonomy and real-world actions
+
