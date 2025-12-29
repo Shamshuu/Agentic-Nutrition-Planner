@@ -104,8 +104,6 @@ Each agent operates with a **clearly defined role, goal, and set of constraints*
 | Environmental Analyst | Estimate sustainability impact | Use conservative LCA assumptions |
 | Recipe Agent (planned) | Provide cooking instructions | Use reliable web sources |
 | Ordering Agent (planned) | Place grocery orders | Availability & platform constraints |
-
-------|---------------|
 | Intent Detection Agent | Detects whether the user wants a new plan, refinement, or a general question |
 | Request Analysis Agent | Extracts constraints like budget, dislikes, preferences |
 | Doctor Agent | Computes and validates calorie & protein targets |
@@ -172,6 +170,7 @@ Each agent operates with a **clearly defined role, goal, and set of constraints*
 app_old.py          # Main Streamlit application
 nutrition_memory.db # Auto-generated SQLite database
 .env                # API keys
+users.db
 requirements.txt
 README.md
 ```
@@ -287,4 +286,5 @@ This project demonstrates a **true agentic AI system** for healthcare and fitnes
 - Human-in-the-loop refinement
 
 - Planned autonomy and real-world actions
+
 
