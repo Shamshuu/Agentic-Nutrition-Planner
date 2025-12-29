@@ -102,18 +102,8 @@ Each agent operates with a **clearly defined role, goal, and set of constraints*
 | Budget Agent | Optimize grocery list cost | Stay within budget targets |
 | Manager Agent | Produce readable, structured output | No loss of critical information |
 | Environmental Analyst | Estimate sustainability impact | Use conservative LCA assumptions |
-| Recipe Agent (planned) | Provide cooking instructions | Use reliable web sources |
-| Ordering Agent (planned) | Place grocery orders | Availability & platform constraints |
-| Intent Detection Agent | Detects whether the user wants a new plan, refinement, or a general question |
-| Request Analysis Agent | Extracts constraints like budget, dislikes, preferences |
-| Doctor Agent | Computes and validates calorie & protein targets |
-| Chef Agent | Designs complete, varied meals |
-| Budget Agent | Calculates grocery list and total cost |
-| Manager Agent | Formats the final plan for readability |
-| Environmental Analyst | Estimates CO₂ footprint and sustainability score |
-| Recipe Agent (planned) | Retrieves cooking instructions from the web |
-| Ordering Agent (planned) | Places grocery orders automatically |
-
+| Recipe Agent (planned) | Retrieves cooking instructions from the web | Use reliable web sources |
+| Ordering Agent (planned) | Places grocery orders automatically | Availability & platform constraints |
 ---
 
 ## ✨ Features Implemented
@@ -284,7 +274,7 @@ This project demonstrates a **true agentic AI system** for healthcare and fitnes
 - Persistent memory
 - Constraint-aware planning
 - Human-in-the-loop refinement
-
 - Planned autonomy and real-world actions
+
 
 
