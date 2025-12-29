@@ -12,6 +12,8 @@ from PIL import Image
 
 # --- 1. INITIALIZATION ---
 load_dotenv()
+MAX_RETRIES = 5          # max correction attempts
+CAL_TOLERANCE = 25 
 st.set_page_config(page_title="Agentic Nutrition Planner", page_icon="🥗", layout="wide")
 
 cookies = EncryptedCookieManager(
@@ -172,63 +174,63 @@ CAL_DB = {
     "oats_50g": 190
 }
 
-def enforce_minimum_calories(plan_text, target_cals, target_protein):
-    """
-    Lightweight calorie correction.
-    Adds safe calorie boosters if plan is under target.
-    """
-    match = re.search(r"Total:\s*(\d+)\s*kcal", plan_text)
-    if match:
-        estimated = int(match.group(1))
-    else:
-        # Fallback if total is missing
-        estimated = target_cals
+# def enforce_minimum_calories(plan_text, target_cals, target_protein):
+#     """
+#     Lightweight calorie correction.
+#     Adds safe calorie boosters if plan is under target.
+#     """
+#     match = re.search(r"Total:\s*(\d+)\s*kcal", plan_text)
+#     if match:
+#         estimated = int(match.group(1))
+#     else:
+#         # Fallback if total is missing
+#         estimated = target_cals
         
-    protein_match = re.search(r"Total:\s*\d+\s*kcal,\s*(\d+)\s*gm protein", plan_text, re.IGNORECASE)
+#     protein_match = re.search(r"Total:\s*\d+\s*kcal,\s*(\d+)\s*gm protein", plan_text, re.IGNORECASE)
 
-    if protein_match:
-        total_protein = int(protein_match.group(1))
-    else:
-        total_protein = target_protein
+#     if protein_match:
+#         total_protein = int(protein_match.group(1))
+#     else:
+#         total_protein = target_protein
 
-    if estimated >= target_cals:
-        return plan_text  # already acceptable
+#     if estimated >= target_cals:
+#         return plan_text  # already acceptable
 
-    deficit = target_cals - estimated
+#     deficit = target_cals - estimated
 
-    boosters = []
+#     boosters = []
 
-    if deficit > 0:
-        boosters.append("• 1 Banana (105 kcal)")
-        deficit -= 105
+#     if deficit > 0:
+#         boosters.append("• 1 Banana (105 kcal)")
+#         deficit -= 105
 
-    if deficit > 0:
-        boosters.append("• 250 ml Milk (150 kcal)")
-        deficit -= 150
+#     if deficit > 0:
+#         boosters.append("• 250 ml Milk (150 kcal)")
+#         deficit -= 150
         
         
-    protein_deficit = target_protein - total_protein
+#     protein_deficit = target_protein - total_protein
 
-    protein_boosters = []
+#     protein_boosters = []
     
-    if protein_deficit > 0:
-        protein_boosters.append("• 2 Boiled Eggs (+12 gm protein)")
-        protein_deficit -= 12
+#     if protein_deficit > 0:
+#         protein_boosters.append("• 2 Boiled Eggs (+12 gm protein)")
+#         protein_deficit -= 12
 
-    if protein_deficit > 0:
-        protein_boosters.append("• 200 g Curd (+10 gm protein)")
-        protein_deficit -= 10
+#     if protein_deficit > 0:
+#         protein_boosters.append("• 200 g Curd (+10 gm protein)")
+#         protein_deficit -= 10
 
-    if protein_deficit > 0:
-        protein_boosters.append("• 150 g Chicken Breast (+30 gm protein)")
+#     if protein_deficit > 0:
+#         protein_boosters.append("• 150 g Chicken Breast (+30 gm protein)")
 
-        correction = "\n\n⚡ **Calorie Adjustment Added Automatically**\n"
-        correction += "To meet daily energy needs, add:\n"
-        correction += "\n".join(boosters)
+#         correction = "\n\n⚡ **Calorie Adjustment Added Automatically**\n"
+#         correction += "To meet daily energy needs, add:\n"
+#         correction += "\n".join(boosters)
 
-    final_text= plan_text + correction
+#     final_text= plan_text + correction
     
-    return final_text
+#     return final_text
 
 
 # --- 3. MULTI-AGENT ENGINE ---
@@ -244,6 +246,78 @@ def run_agent(agent_role, agent_persona, user_context):
         temperature=0.3
     )
     return response.choices[0].message.content
+
+def extract_calories(plan_text: str) -> int:
+    """
+    Extract total daily calories from a natural-language meal plan.
+    Priority:
+    1. Explicit daily total (e.g. 'Total: 2800 kcal')
+    2. '#Total:' section
+    3. Sum of meal calories (Breakfast/Lunch/Dinner/Snacks)
+    """
+
+    if not plan_text or not isinstance(plan_text, str):
+        return 0
+
+    text = plan_text.lower()
+
+    # --------------------------------------------------
+    # 1️⃣ STRONG SIGNAL: Explicit daily total
+    # --------------------------------------------------
+    explicit_patterns = [
+        r"total\s*[:\-]?\s*(\d{3,5})\s*kcal",
+        r"#\s*total\s*[:\-]?\s*(\d{3,5})",
+        r"total calories\s*[:\-]?\s*(\d{3,5})",
+    ]
+
+    for pattern in explicit_patterns:
+        match = re.search(pattern, text)
+        if match:
+            try:
+                return int(match.group(1))
+            except ValueError:
+                pass
+
+    # --------------------------------------------------
+    # 2️⃣ MEDIUM SIGNAL: Meal-wise calories
+    # --------------------------------------------------
+    meal_patterns = [
+        r"breakfast\s*[:\-]?\s*(\d{2,4})\s*kcal",
+        r"lunch\s*[:\-]?\s*(\d{2,4})\s*kcal",
+        r"dinner\s*[:\-]?\s*(\d{2,4})\s*kcal",
+        r"snacks?\s*[:\-]?\s*(\d{2,4})\s*kcal",
+    ]
+
+    total = 0
+    found_any = False
+
+    for pattern in meal_patterns:
+        for match in re.findall(pattern, text):
+            try:
+                total += int(match)
+                found_any = True
+            except ValueError:
+                continue
+
+    if found_any:
+        return total
+
+    # --------------------------------------------------
+    # 3️⃣ WEAK FALLBACK: Any kcal mentions (guarded)
+    # --------------------------------------------------
+    all_kcals = re.findall(r"(\d{2,4})\s*kcal", text)
+    numeric_kcals = [int(x) for x in all_kcals if 50 <= int(x) <= 2000]
+
+    if numeric_kcals:
+        # Avoid double counting: sum only if reasonable
+        summed = sum(numeric_kcals)
+        if summed <= 6000:   # sanity cap
+            return summed
+
+    # --------------------------------------------------
+    # 4️⃣ LAST RESORT
+    # --------------------------------------------------
+    return 0
 
 def detect_user_intent(user_message, chat_history, has_pending_plan):
     """
@@ -724,12 +798,48 @@ def generate_plan_workflow(email, age, weight, height, gender, act, goal, durati
             - Respect items to avoid/include from Request Analysis Agent
             - Always maintain nutritional balance and ensure meals reach target calories of {target_cals} per day
             - Be adaptive based on the Request Analysis Agent's structured output"""
+         
+        plan_text = run_agent(
+            "Planner, while calculating and arranging items be realistc & Budget Agent",
+            agent_persona,
+            budget_prompt
+        )
+
+        # ---------- CALORIE CORRECTION LOOP ----------
+        for attempt in range(MAX_RETRIES):
+            total_calories = extract_calories(plan_text)
+            gap = target_cals - total_calories
+
+            # Acceptable range
+            if abs(gap) <= CAL_TOLERANCE:
+                break
+
+            correction_prompt = f"""
+            You generated the following meal plan:
+
+            {plan_text}
+
+            CALORIE CHECK FAILED:
+            - Current total calories: {total_calories}
+            - Target calories: {target_cals}
+            - Difference: {gap} kcal
+
+            TASK:
+            - DO NOT redesign the plan
+            - ONLY adjust quantities OR add/remove 1–2 simple foods
+            - Keep meals realistic and affordable
+            - Return the FULL corrected meal plan
+            - Ensure final calories are within ±{CAL_TOLERANCE} kcal
+            """
+
+            plan_text = run_agent(
+                "Calorie Correction Agent",
+                "You are correcting a meal plan to meet calorie targets accurately.",
+                correction_prompt
+            )
+            
         
-        plan_output = run_agent("Planner, while calculating and arranging items be realistc & Budget Agent", agent_persona, budget_prompt)
- 
-       
-        
-        cost_match = re.search(r"###\s*TOTAL_COST:\s*([\d,]+)", plan_output)
+        cost_match = re.search(r"###\s*TOTAL_COST:\s*([\d,]+)", plan_text)
         extracted_cost = cost_match.group(1).replace(",", "") if cost_match else "0"
         final_cost=extracted_cost
     
@@ -739,8 +849,8 @@ def generate_plan_workflow(email, age, weight, height, gender, act, goal, durati
         manager_prompt = f"""
         Compile this into a user-friendly plan.
         Doctor Targets: {doc_output}
-        Final Plan: {plan_output}
         Final Cost: {extracted_cost}
+        Final Plan: {plan_text}
         
         FORMAT:
         1. 🎯 HEALTH TARGETS
@@ -767,9 +877,10 @@ def generate_plan_workflow(email, age, weight, height, gender, act, goal, durati
             (e.g., ### Total Budget For Plan: [₹number] ###)
         6.  FINAL VERDICT (it should be about meal and give message to consult a doctor if needed)
         """
-        final_output = run_agent("Manager Agent", "You are a Helpful Assistant.", manager_prompt)
+        final_output = run_agent("Manager Agent", "You are a Helpful Assistant.", plan_text + "\n\n" + manager_prompt)
         
-        final_output = enforce_minimum_calories(final_output, target_cals, tpro)
+        
+        # final_output = enforce_minimum_calories(final_output, target_cals, tpro)
         
         status.update(label="✅ Strategy Finalized!", state="complete", expanded=True)
 
@@ -798,7 +909,7 @@ def generate_plan_workflow(email, age, weight, height, gender, act, goal, durati
         # Fallback: search in plan_output if not found in final_output
         if extracted_cost == "0":
             for pattern in patterns:
-                cost_match = re.search(pattern, plan_output, re.IGNORECASE)
+                cost_match = re.search(pattern, plan_text, re.IGNORECASE)
                 if cost_match:
                     extracted_cost = cost_match.group(1).replace(",", "").strip()
                     if extracted_cost and extracted_cost.isdigit():
@@ -1337,7 +1448,6 @@ else:
                         "content": f"✅ I've regenerated your plan considering your feedback. Check the updated 'Proposed Strategy' section above."
                     })
                     # st.rerun()
-                    st.success()
             
             # GENERAL_QUESTION or fallback
             if intent == "GENERAL_QUESTION":
@@ -1414,148 +1524,139 @@ else:
                 bot_reply = live_chat_reply(st.session_state['live_chat'], user_context)
                 st.session_state['live_chat'].append({"role": "assistant", "content": bot_reply})
                 # st.rerun()
-                st.success()
             
 
     with tab2:
-        st.header("Food Diary")
-        img_file = st.file_uploader("Upload meal photo...", type=["jpg", "png", "jpeg"])
-        if img_file:
-            st.image(img_file, width=300)
-            if st.button("Analyze"):
-                analysis_result = analyze_image(img_file)
-                st.info(analysis_result)
+        st.header("🍽️ Food Diary")
 
-                # Estimate carbon footprint for this meal
-                meal_co2 = estimate_food_carbon(analysis_result)
+        # --- Upload image ---
+        uploaded_image = st.file_uploader(
+            "Upload meal photo...",
+            type=["jpg", "png", "jpeg"],
+            key="food_image_uploader"
+        )
 
-                st.caption(f"🌍 Estimated Carbon Impact: {meal_co2:.2f} kg CO₂e")
+        # --- FIX: Only reset if the file is NEW ---
+        if uploaded_image is not None:
+            # Create a unique ID for the file
+            file_id = f"{uploaded_image.name}_{uploaded_image.size}"
+            
+            # Check if this is a DIFFERENT file than before
+            if st.session_state.get("last_uploaded_file_id") != file_id:
+                st.session_state["current_food_image"] = uploaded_image
+                st.session_state["food_analysis_done"] = False
+                st.session_state["food_analysis_result"] = None
+                st.session_state["last_uploaded_file_id"] = file_id # Update the ID
+        else:
+            # If user removed the file, clear the ID
+            st.session_state["last_uploaded_file_id"] = None
 
-                # Store full meal + carbon data
-                st.session_state['agent_memory']["food_diary"].append({
-                    "timestamp": datetime.datetime.now().isoformat(),
-                    "analysis": analysis_result,
-                    "co2": meal_co2
-                })
+        current_image = st.session_state.get("current_food_image")
 
+        # --- Display image ---
+        if current_image is not None:
+            st.image(current_image, caption="Current meal under analysis", width=300)
+
+            # --- Analyze button ---
+            if st.button("Analyze", key="analyze_food_btn"):
+                with st.spinner("🔍 AI is analyzing your food..."):
+                    analysis_result = analyze_image(current_image)
+                    st.session_state["food_analysis_result"] = analysis_result
+                    st.session_state["food_analysis_done"] = True
+                    
+                    # Carbon estimate
+                    meal_co2 = estimate_food_carbon(analysis_result)
+                    
+                    # Update Agent Memory immediately so Chat can see it
+                    st.session_state["agent_memory"]["food_diary"].append({
+                        "timestamp": datetime.datetime.now().isoformat(),
+                        "analysis": analysis_result,
+                        "co2": meal_co2
+                    })
+
+            # --- Show analysis ---
+            if st.session_state.get("food_analysis_done"):
+                st.info(st.session_state["food_analysis_result"])
+                
+                # Show carbon metric if available in memory
+                if st.session_state["agent_memory"]["food_diary"]:
+                    last_entry = st.session_state["agent_memory"]["food_diary"][-1]
+                    st.caption(f"🌍 Estimated Carbon Impact: {last_entry.get('co2', 0):.2f} kg CO₂e")
+
+                st.markdown("---")
+
+                
 
 
     with tab3:
         st.header("🌍 Ecological Impact Of Meal")
 
-        # --- ANALYSIS SOURCE SELECTOR ---
         analysis_mode = st.radio(
             "Choose analysis source",
             ["Planned Meal (Strategy)", "Actual Meals (Photos)"],
             horizontal=True
         )
 
-        # --- BUILD ANALYSIS CONTEXT ---
+        # --- CONTEXT BUILDER ---
+        # (This part is fine, keeping your existing logic)
         if analysis_mode == "Planned Meal (Strategy)":
             if 'current_strategy' not in st.session_state:
                 st.warning("⚠️ Please generate a Meal Plan in the 'Strategic Planner' tab first.")
-                st.info("Once a plan is generated, this module will analyze its environmental cost.")
                 st.stop()
-
             analysis_context = st.session_state['current_strategy']
             analysis_label = "PLANNED MEAL STRATEGY"
-
         else:
             food_logs = st.session_state['agent_memory'].get("food_diary", [])
-
             if not food_logs:
                 st.warning("⚠️ No food photos analyzed yet. Use the Visual Tracker first.")
                 st.stop()
-
             analysis_context = "\n".join([
                 f"- {f['analysis']} (Estimated CO₂: {f.get('co2', 'N/A')} kg)"
                 for f in food_logs[-5:]
             ])
-
-            analysis_label = "ACTUAL CONSUMED MEALS (FROM PHOTOS)"
+            analysis_label = "ACTUAL CONSUMED MEALS"
 
         st.write(f"Analyze the environmental impact of **{analysis_label.lower()}**.")
 
-        # --- TRIGGER ANALYSIS ---
+        # --- FIX: Button logic ---
         if st.button("🌱 Calculate Carbon Footprint"):
-            with st.status("♻️ Environmental Analyst is auditing your data...", expanded=True):
-
+            with st.status("♻️ Environmental Analyst is auditing...", expanded=True):
+                # ... (Your existing prompt construction logic) ...
                 eco_prompt = f"""
-                You are an Environmental Scientist specializing in Food Systems and Life Cycle Assessment (LCA).
-
-                Analyze the following data source ({analysis_label}):
-
-                {analysis_context}
-
-                TASK:
-                1. Estimate the Total Carbon Footprint (kg CO2e).
-                - Red Meat (High impact)
-                - Chicken/Dairy (Medium impact)
-                - Plant-based/Lentils (Low impact)
-                2. Calculate a Sustainability Score from 0 to 100 (100 = Extremely Eco-friendly).
-                3. Identify High Emission items.
-                4. Suggest 2–3 specific Green Swaps.
-
-                CRITICAL OUTPUT FORMAT:
-                ### CO2: 12.5 ###
-                ### SCORE: 75 ###
-
-                Then provide a brief scientific explanation.
+                You are an Environmental Scientist. Analyze: {analysis_context}
+                TASK: Estimate Carbon Footprint (kg CO2e) and Score (0-100).
+                OUTPUT FORMAT: ### CO2: 12.5 ### ### SCORE: 75 ###
                 """
+                
+                eco_report = run_agent("Environmental Analyst", "You are a precise scientist.", eco_prompt)
 
-                eco_report = run_agent(
-                    "Environmental Analyst",
-                    "You are a precise scientist.",
-                    eco_prompt
-                )
-
-                # --- EXTRACT METRICS ---
+                # Extract
                 co2_match = re.search(r"###\s*CO2:\s*([\d\.]+)", eco_report)
                 score_match = re.search(r"###\s*SCORE:\s*([\d]+)", eco_report)
-
                 est_co2 = float(co2_match.group(1)) if co2_match else 0.0
                 sust_score = int(score_match.group(1)) if score_match else 50
-
-                # Clean report AFTER extraction
                 clean_report = re.sub(r"###.*?###", "", eco_report).strip()
 
-                # --- STORE IN AGENT MEMORY ---
+                # --- STORE PERSISTENTLY ---
                 st.session_state['agent_memory'].update({
-                    "carbon_metrics": {
-                        "co2": est_co2,
-                        "score": sust_score,
-                        "source": analysis_mode
-                    },
+                    "carbon_metrics": {"co2": est_co2, "score": sust_score, "source": analysis_mode},
                     "carbon_report": clean_report
                 })
 
-            # --- VISUAL DASHBOARD ---
-            st.subheader(f"📊 Impact Dashboard — {analysis_label}")
+        # --- DISPLAY FROM MEMORY (Not just local variables) ---
+        # This ensures it persists when you chat!
+        metrics = st.session_state['agent_memory'].get("carbon_metrics")
+        report = st.session_state['agent_memory'].get("carbon_report")
 
+        if metrics and report:
+            st.subheader(f"📊 Impact Dashboard — {metrics['source']}")
             m1, m2, m3 = st.columns(3)
-            m1.metric("Est. Carbon Emissions", f"{est_co2:.2f} kg CO2e")
-            m2.metric("Equivalent Car Travel", f"{est_co2 * 4:.1f} km")
-            m3.metric("Trees Needed to Offset", f"{est_co2 / 20:.1f} trees/year")
-
-            st.write(f"**Sustainability Score: {sust_score}/100**")
-            st.progress(sust_score / 100)
-
-            if sust_score < 50:
-                st.caption("🔴 High Impact (Consider reducing meat/dairy)")
-            elif sust_score < 80:
-                st.caption("🟡 Moderate Impact")
-            else:
-                st.caption("🟢 Eco-Friendly Plan")
-
-            st.markdown("---")
+            m1.metric("Est. Carbon Emissions", f"{metrics['co2']:.2f} kg CO2e")
+            m2.metric("Equivalent Car Travel", f"{metrics['co2'] * 4:.1f} km")
+            m3.metric("Trees Needed to Offset", f"{metrics['co2'] / 20:.1f} trees/year")
+            
+            st.progress(metrics['score'] / 100)
+            st.caption(f"Sustainability Score: {metrics['score']}/100")
+            
             st.markdown("### 📝 Scientist's Report")
-            st.write(clean_report)
-
-            with st.expander("ℹ️ How is this calculated?"):
-                st.write("""
-                **Estimates based on Global Average LCA Data**
-                - 🥩 Mutton/Lamb: ~25–30 kg CO2e/kg
-                - 🍗 Chicken: ~6–7 kg CO2e/kg
-                - 🧀 Paneer/Cheese: ~10–12 kg CO2e/kg
-                - 🥬 Vegetables/Lentils: <2 kg CO2e/kg
-                """)
+            st.write(report)
