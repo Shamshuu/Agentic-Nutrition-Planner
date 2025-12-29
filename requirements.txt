@@ -2,5 +2,5 @@ streamlit
 groq
 google-genai
 pillow
-python
 python-dotenv
+streamlit-cookies-manager
