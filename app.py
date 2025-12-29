@@ -4,6 +4,7 @@ import sqlite3
 import hashlib
 import re
 import datetime
+from streamlit_cookies_manager import EncryptedCookieManager
 from google import genai
 from groq import Groq
 from dotenv import load_dotenv
@@ -13,6 +14,14 @@ from PIL import Image
 load_dotenv()
 st.set_page_config(page_title="Agentic Nutrition Planner", page_icon="🥗", layout="wide")
 
+cookies = EncryptedCookieManager(
+    prefix="nutrition_app",
+    password=os.getenv("COOKIE_SECRET", "dev-secret-key")
+)
+
+if not cookies.ready():
+    st.stop()
+    
 groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 genai_client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
@@ -919,6 +928,11 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # --- 5. UI FLOW ---
+if cookies.get("user_email") and not st.session_state.get("logged_in"):
+    user = get_user_by_email(cookies.get("user_email"))
+    if user:
+        st.session_state['logged_in'] = True
+        st.session_state['user_info'] = user
 
 if 'logged_in' not in st.session_state: st.session_state['logged_in'] = False
 if 'user_info' not in st.session_state: st.session_state['user_info'] = None
@@ -957,6 +971,8 @@ def login_dialog():
                 if user_data:
                     st.session_state['logged_in'] = True
                     st.session_state['user_info'] = user_data
+                    cookies["user_email"] = email
+                    cookies.save()
                     st.rerun()
                 else:
                     st.error("❌ Incorrect Email or Password")
@@ -1041,7 +1057,9 @@ else:
 
     st.sidebar.markdown("---")
     if st.sidebar.button("🚪 Logout"):
-        st.session_state['logged_in'] = False
+        cookies.pop("user_email", None)
+        cookies.save()
+        st.session_state.clear()
         st.rerun()
         
     with st.sidebar.expander("⚠️ Danger Zone"):
