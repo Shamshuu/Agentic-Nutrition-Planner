@@ -22,94 +22,93 @@ cookies = EncryptedCookieManager(
 if not cookies.ready():
     st.stop()
     
+@st.cache_resource
+def get_groq_client():
+    return Groq(api_key=os.getenv("GROQ_API_KEY"))
+
+
 groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 genai_client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
 # --- 2. DATABASE & AUTH SYSTEM ---
 def init_db():
-    conn = sqlite3.connect('nutrition_memory.db')
-    c = conn.cursor()
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS users (
-            email TEXT PRIMARY KEY,
-            username TEXT,
-            password TEXT,
-            age INTEGER,
-            gender TEXT,
-            height REAL,
-            weight REAL,
-            goal_weight REAL,
-            activity TEXT,
-            meals_per_day INTEGER,
-            diet_type TEXT,
-            sleep REAL,
-            allergies TEXT,
-            cuisine TEXT
-        )
-    ''')
+    with sqlite3.connect('nutrition_memory.db') as conn:
+        c = conn.cursor()
+        c.execute('''
+            CREATE TABLE IF NOT EXISTS users (
+                email TEXT PRIMARY KEY,
+                username TEXT,
+                password TEXT,
+                age INTEGER,
+                gender TEXT,
+                height REAL,
+                weight REAL,
+                goal_weight REAL,
+                activity TEXT,
+                meals_per_day INTEGER,
+                diet_type TEXT,
+                sleep REAL,
+                allergies TEXT,
+                cuisine TEXT
+            )
+        ''')
 
-    c.execute('''
-         CREATE TABLE IF NOT EXISTS diet_plans (
-             id INTEGER PRIMARY KEY AUTOINCREMENT,
-             email TEXT,
-             plan_text TEXT,
-             status TEXT, -- 'approved', 'rejected'
-             feedback TEXT,
-             created_at TIMESTAMP
-         )
-     ''')
-    conn.commit()
-    conn.close()
+        c.execute('''
+            CREATE TABLE IF NOT EXISTS diet_plans (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                email TEXT,
+                plan_text TEXT,
+                status TEXT, -- 'approved', 'rejected'
+                feedback TEXT,
+                created_at TIMESTAMP
+            )
+        ''')
+        conn.commit()
 
 def make_hashes(password): return hashlib.sha256(str.encode(password)).hexdigest()
 def check_hashes(password, hashed_text): return make_hashes(password) == hashed_text
 def is_valid_email(email): return re.match(r"^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$", email) is not None
 
 def add_user(email, username, password, age, gender, height, weight, goal_w, activity, meals, diet, sleep, allergies, cuisine):
-    conn = sqlite3.connect('nutrition_memory.db')
-    c = conn.cursor()
     try:
-        c.execute('INSERT INTO users VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)', 
-                  (email, username, make_hashes(password), age, gender, height, weight, goal_w, activity, meals, diet, sleep, allergies, cuisine))
-        conn.commit()
-        return True
+        with sqlite3.connect('nutrition_memory.db') as conn:
+            c = conn.cursor()
+            c.execute('INSERT INTO users VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)', 
+                      (email, username, make_hashes(password), age, gender, height, weight, goal_w, activity, meals, diet, sleep, allergies, cuisine))
+            conn.commit()
+            return True
     except sqlite3.IntegrityError:
-        return False 
-    finally:
-        conn.close()
+        return False
 
 def login_user(email, password):
-    conn = sqlite3.connect('nutrition_memory.db')
-    c = conn.cursor()
-    c.execute('SELECT * FROM users WHERE email = ?', (email,))
-    data = c.fetchall()
-    conn.close()
-    if data and check_hashes(password, data[0][2]): return data[0]
-    return False
+    with sqlite3.connect('nutrition_memory.db') as conn:
+        c = conn.cursor()
+        c.execute('SELECT * FROM users WHERE email = ?', (email,))
+        data = c.fetchall()
+        if data and check_hashes(password, data[0][2]):
+            return data[0]
+        return False
 
 def get_user_by_email(email):
-    conn = sqlite3.connect('nutrition_memory.db')
-    c = conn.cursor()
-    c.execute('SELECT * FROM users WHERE email = ?', (email,))
-    data = c.fetchall()
-    conn.close()
-    return data[0] if data else None
+    with sqlite3.connect('nutrition_memory.db') as conn:
+        c = conn.cursor()
+        c.execute('SELECT * FROM users WHERE email = ?', (email,))
+        data = c.fetchall()
+        return data[0] if data else None
 
 def save_diet_plan(email, plan_text, status, feedback=None):
-    conn = sqlite3.connect('nutrition_memory.db')
-    c = conn.cursor()
-    c.execute('INSERT INTO diet_plans (email, plan_text, status, feedback, created_at) VALUES (?, ?, ?, ?, ?)',
+    with sqlite3.connect('nutrition_memory.db') as conn:
+        c = conn.cursor()
+        c.execute('INSERT INTO diet_plans (email, plan_text, status, feedback, created_at) VALUES (?, ?, ?, ?, ?)',
             (email, plan_text, status, feedback, datetime.datetime.now()))
-    conn.commit()
-    conn.close()
-
+        conn.commit()
+    
 def get_approved_plans(email):
-    conn = sqlite3.connect('nutrition_memory.db')
-    c = conn.cursor()
-    c.execute('SELECT created_at, plan_text FROM diet_plans WHERE email = ? AND status = "approved" ORDER BY created_at DESC', (email,))
-    data = c.fetchall()
-    conn.close()
-    return data
+    with sqlite3.connect('nutrition_memory.db') as conn:
+        c = conn.cursor()
+        c.execute('SELECT created_at, plan_text FROM diet_plans WHERE email = ? AND status = "approved" ORDER BY created_at DESC', (email,))
+        data = c.fetchall()
+        return data
 
 @st.cache_data(ttl=600)
 def get_latest_approved_context(email):
@@ -120,26 +119,35 @@ def get_latest_approved_context(email):
     return "No previous approved plans."
 
 def update_user_profile(email, age, gender, height, weight, goal_w, activity, meals, diet, sleep, allergies, cuisine):
-    conn = sqlite3.connect('nutrition_memory.db')
-    c = conn.cursor()
-    c.execute('''
-        UPDATE users SET 
-        age=?, gender=?, height=?, weight=?, goal_weight=?, activity=?, meals_per_day=?, diet_type=?, sleep=?, allergies=?, cuisine=?
-        WHERE email=?
-    ''', (age, gender, height, weight, goal_w, activity, meals, diet, sleep, allergies, cuisine, email))
-    conn.commit()
-    conn.close()
+    with sqlite3.connect('nutrition_memory.db') as conn:
+        c = conn.cursor()
+        c.execute('''
+            UPDATE users SET 
+            age=?, gender=?, height=?, weight=?, goal_weight=?, activity=?, meals_per_day=?, diet_type=?, sleep=?, allergies=?, cuisine=?
+            WHERE email=?
+        ''', (age, gender, height, weight, goal_w, activity, meals, diet, sleep, allergies, cuisine, email))
+        conn.commit()
+        
+def logout():
+    cookies.pop("user_email", None)
+    cookies.save()
+    st.session_state.clear()
+    st.session_state["force_logged_out"] = True
+    st.rerun()
+
 
 def delete_user_account(email):
-    conn = sqlite3.connect('nutrition_memory.db')
-    c = conn.cursor()
+    with sqlite3.connect('nutrition_memory.db') as conn:
+        c = conn.cursor()
+        c.execute('DELETE FROM diet_plans WHERE email = ?', (email,))
+        c.execute('DELETE FROM users WHERE email = ?', (email,))
+        conn.commit()
+    
+    
+@st.cache_resource
+def get_db():
+    return sqlite3.connect("nutrition_memory.db", check_same_thread=False)
 
-    c.execute('DELETE FROM diet_plans WHERE email = ?', (email,))
-
-    c.execute('DELETE FROM users WHERE email = ?', (email,))
-
-    conn.commit()
-    conn.close()
 
 init_db()
 
@@ -227,7 +235,7 @@ def enforce_minimum_calories(plan_text, target_cals, target_protein):
 
 def run_agent(agent_role, agent_persona, user_context):
     # """Generic function to call a specific agent"""
-    response = groq_client.chat.completions.create(
+    response = get_groq_client().chat.completions.create(
         model="llama-3.1-8b-instant",
         messages=[
             {"role": "system", "content": f"You are the {agent_role}. {agent_persona}"},
@@ -300,7 +308,7 @@ def detect_user_intent(user_message, chat_history, has_pending_plan):
         import json
         import re
         
-        response = groq_client.chat.completions.create(
+        response = get_groq_client().chat.completions.create(
             model="llama-3.1-8b-instant",
             messages=[
                 {"role": "system", "content": "You are a precise JSON response agent. Always respond with valid JSON only, no markdown, no code blocks."},
@@ -422,7 +430,7 @@ def analyze_user_request(user_feedback, previous_cost=None, duration=None):
         import json
         import re
         
-        response = groq_client.chat.completions.create(
+        response = get_groq_client().chat.completions.create(
             model="llama-3.1-8b-instant",
             messages=[
                 {"role": "system", "content": "You are a precise JSON response agent. Always respond with valid JSON only, no markdown, no code blocks."},
@@ -804,38 +812,6 @@ def generate_plan_workflow(email, age, weight, height, gender, act, goal, durati
             "total_budget": extracted_cost
         })
 
-
-        st.info(st.session_state['current_strategy'])
-
-        if 'current_strategy' in st.session_state:
-            st.markdown("### 💰 Financial Forecast")
-            c1, c2 = st.columns(2)
-            
-            # Display the extracted cost
-            try:
-                budget_str = str(final_cost)
-                # Remove any non-digit characters except decimal point
-                budget_clean = re.sub(r'[^\d.]', '', budget_str)
-                total_cost = float(budget_clean) if budget_clean else 0.0
-                
-                if total_cost > 0:
-                    c1.metric(f"Total Cost ({duration} Days)", f"₹{total_cost:,.0f}")
-                    c2.metric("Daily Average", f"₹{total_cost/duration:,.0f}/day")
-                else:
-                    c1.metric(f"Total Cost ({duration} Days)", "₹--")
-                    c2.metric("Daily Average", "₹--/day")
-                    with st.expander("🔍 Debug Info"):
-                        st.write("**Extracted Budget Value:**", budget_str)
-                        st.write("**Note:** Cost extraction failed. The agent response may not contain the cost in the expected format.")
-                        st.caption("Expected format: `### TOTAL_COST: [number] ###`")
-            except (ValueError, ZeroDivisionError, TypeError) as e:
-                c1.metric(f"Total Cost ({duration} Days)", "₹--")
-                c2.metric("Daily Average", "₹--/day")
-                with st.expander("🔍 Debug Info"):
-                    st.error(f"Error extracting cost: {str(e)}")
-                    st.write("**Extracted Budget Value:**", st.session_state.get('total_budget', 'N/A'))
-                    st.caption("Expected format: `### TOTAL_COST: [number] ###`")
-
     return final_output, final_cost
 
 def refine_plan_with_feedback(current_plan, feedback_msg):
@@ -866,7 +842,7 @@ def live_chat_reply(history, user_context):
     # Convert session history to Groq format
     messages = [{"role":"system", "content": system_msg}] + recent_history
 
-    resp = groq_client.chat.completions.create(
+    resp = get_groq_client().chat.completions.create(
         model="llama-3.1-8b-instant",
         messages=messages,
         max_tokens=800,
@@ -928,7 +904,11 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # --- 5. UI FLOW ---
-if cookies.get("user_email") and not st.session_state.get("logged_in"):
+if (
+    cookies.get("user_email")
+    and not st.session_state.get("logged_in")
+    and not st.session_state.get("force_logged_out", False)
+):
     user = get_user_by_email(cookies.get("user_email"))
     if user:
         st.session_state['logged_in'] = True
@@ -973,6 +953,8 @@ def login_dialog():
                     st.session_state['user_info'] = user_data
                     cookies["user_email"] = email
                     cookies.save()
+                    st.session_state.pop("force_logged_out", None)
+                    st.success("Logged in successfully")
                     st.rerun()
                 else:
                     st.error("❌ Incorrect Email or Password")
@@ -1045,7 +1027,6 @@ else:
             update_user_profile(u_data[0], e_age, u_data[4], u_data[5], e_weight, e_goal, e_activity, u_data[9], e_diet, u_data[11], e_allergy, e_cuisine)
             st.session_state['user_info'] = get_user_by_email(u_data[0]) 
             st.success("Updated!")
-            st.rerun()
 
         with st.sidebar.expander("📚 Your Diet History"):
             approved = get_approved_plans(u_data[0])
@@ -1053,19 +1034,20 @@ else:
             for i, (ts, plan) in enumerate(approved, 1):
                 if st.button(f"📅 Plan {ts[:10]}", key=f"hist_{i}"):
                     st.session_state['pending_plan'] = plan # Load old plan into view
-                    st.rerun()
+                    st.success("Loaded plan into view.")
 
     st.sidebar.markdown("---")
-    if st.sidebar.button("🚪 Logout"):
-        cookies.pop("user_email", None)
-        cookies.save()
-        st.session_state.clear()
-        st.rerun()
+    st.sidebar.button(
+        "🚪 Logout",
+        key="sidebar_logout_btn",
+        on_click=logout
+    )
         
     with st.sidebar.expander("⚠️ Danger Zone"):
         if st.button("Delete My Account", type="primary"):
             delete_user_account(u_data[0])
             st.session_state.clear()
+            st.success("Account Deleted.")
             st.rerun()
 
     # --- MAIN CONTENT ---
@@ -1122,9 +1104,8 @@ else:
             st.session_state['feedback_mode'] = False
             
             # 5. RERUN to let the Main Display Block handle the rendering
-            st.rerun()
+            # st.rerun()
 
-        # [Inside Tab 1, after the Forecast Button]
         
         # --- SINGLE SOURCE OF TRUTH FOR DISPLAYING PLANS ---
         if st.session_state['pending_plan']:
@@ -1134,16 +1115,34 @@ else:
             # This is the ONLY place the plan text is printed to the screen
             st.info(st.session_state['pending_plan'])
             
-            # Cost Metrics
-            c1, c2 = st.columns(2)
-            try:
-                # Clean up cost string to float
-                budget_clean = re.sub(r'[^\d.]', '', str(final_cost))
-                total_cost = float(budget_clean) if budget_clean else 0.0
-                if total_cost > 0:
-                    c1.metric("Total Estimate", f"₹{total_cost:,.0f}")
-            except:
-                pass
+            with st.container(border=True):
+                st.markdown("### 💰 Financial Forecast")
+
+                left, spacer, right = st.columns([2, 1, 2])
+
+                try:
+                    budget_str = str(st.session_state.get("total_budget", "0"))
+                    budget_clean = re.sub(r"[^\d.]", "", budget_str)
+                    total_cost = float(budget_clean) if budget_clean else 0.0
+                    duration = st.session_state.get("plan_duration", 1)
+
+                    if total_cost > 0:
+                        left.metric(
+                            "Total Cost",
+                            f"₹{total_cost:,.0f}"
+                        )
+
+                        right.metric(
+                            "Daily Average",
+                            f"₹{total_cost / duration:,.0f} / day"
+                        )
+                    else:
+                        left.metric("Total Cost", "₹--")
+                        right.metric("Daily Average", "₹--")
+
+                except Exception:
+                    left.metric("Total Cost", "₹--")
+                    right.metric("Daily Average", "₹--")
             
             # ACTION BUTTONS (Only if not in feedback mode)
             if not st.session_state['feedback_mode']:
@@ -1155,7 +1154,7 @@ else:
                         get_latest_approved_context.clear() # Refresh Chat Context
                         st.success("✅ Plan Saved to History!")
                         st.session_state['pending_plan'] = None # Remove from Pending view
-                        st.rerun()
+                        st.success("✅ Plan Saved to History!")
 
                 with b2:
                     # WIP: Order Grocery List (Future)
@@ -1166,7 +1165,7 @@ else:
                     # REJECT: Do NOT Store in DB. Trigger Refinement.
                     if st.button("👎 Reject & Refine", use_container_width=True):
                         st.session_state['feedback_mode'] = True # Triggers the chat input at bottom
-                        st.rerun()
+                        st.success("You can now provide feedback below to refine the plan.")
 
     # --- INTELLIGENT CHAT SYSTEM ---
     
@@ -1206,7 +1205,7 @@ else:
             st.session_state['feedback_mode'] = False
 
             st.success("✅ Plan regenerated based on your feedback.")
-            st.rerun()
+            # st.rerun()
 
     else:
         # Display Chat History
@@ -1262,12 +1261,14 @@ else:
                     st.session_state['feedback_mode'] = False
                     
                     st.session_state['live_chat'].append({"role": "assistant", "content": f"✅ I've created a new {duration}-day plan. Check the 'Proposed Strategy' section above."})
-                    st.rerun()
+                    # st.rerun()
+                    st.success("Plan generated and displayed above.")
                 else:
                     # No duration specified, ask for it
                     reply = "How many days should I plan for?"
                     st.session_state['live_chat'].append({"role": "assistant", "content": reply})
-                    st.rerun()
+                    # st.rerun()
+                    st.success("Asked for duration.")
             
             elif intent == "ANSWER_DURATION":
                 # User is answering a duration question
@@ -1288,13 +1289,15 @@ else:
                         st.session_state['total_budget'] = cost
                         st.session_state['plan_duration'] = duration
                         st.session_state['live_chat'].append({"role": "assistant", "content": "✅ Plan generated! You can review it above."})
-                        st.rerun()
+                        # st.rerun()
+                        st.success()
                     else:
                         raise ValueError("No duration extracted")
                 except:
                     reply = "I need a number (1-7). How many days?"
                     st.session_state['live_chat'].append({"role": "assistant", "content": reply})
-                    st.rerun()
+                    # st.rerun()
+                    st.success()
             
             elif intent == "REGENERATE_PLAN":
                 # User wants to modify/regenerate the existing plan
@@ -1333,7 +1336,8 @@ else:
                         "role": "assistant", 
                         "content": f"✅ I've regenerated your plan considering your feedback. Check the updated 'Proposed Strategy' section above."
                     })
-                    st.rerun()
+                    # st.rerun()
+                    st.success()
             
             # GENERAL_QUESTION or fallback
             if intent == "GENERAL_QUESTION":
@@ -1409,7 +1413,8 @@ else:
                 # 5. Get Reply
                 bot_reply = live_chat_reply(st.session_state['live_chat'], user_context)
                 st.session_state['live_chat'].append({"role": "assistant", "content": bot_reply})
-                st.rerun()
+                # st.rerun()
+                st.success()
             
 
     with tab2:
