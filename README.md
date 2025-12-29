@@ -176,7 +176,9 @@ streamlit
 groq
 google-genai
 pillow
+python
 python-dotenv
+streamlit-cookies-manager
 ```
 
 > ⚠️ Standard library modules such as `hashlib`, `sqlite3`, `re`, `datetime`, and `os` are included with Python and must not be listed as dependencies.
