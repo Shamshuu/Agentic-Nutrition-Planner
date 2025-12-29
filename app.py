@@ -142,6 +142,77 @@ def calculate_needs(weight, height, age, gender, activity):
 
 def calculate_protein(weight): return weight*2
 
+CAL_DB = {
+    "roti": 110,
+    "chapati": 110,
+    "rice_100g": 130,
+    "egg": 70,
+    "milk_250ml": 150,
+    "banana": 105,
+    "curd_200g": 120,
+    "peanuts_30g": 170,
+    "dal_100g": 120,
+    "oats_50g": 190
+}
+
+def enforce_minimum_calories(plan_text, target_cals, target_protein):
+    """
+    Lightweight calorie correction.
+    Adds safe calorie boosters if plan is under target.
+    """
+    match = re.search(r"Total:\s*(\d+)\s*kcal", plan_text)
+    if match:
+        estimated = int(match.group(1))
+    else:
+        # Fallback if total is missing
+        estimated = target_cals
+        
+    protein_match = re.search(r"Total:\s*\d+\s*kcal,\s*(\d+)\s*gm protein", plan_text, re.IGNORECASE)
+
+    if protein_match:
+        total_protein = int(protein_match.group(1))
+    else:
+        total_protein = target_protein
+
+    if estimated >= target_cals:
+        return plan_text  # already acceptable
+
+    deficit = target_cals - estimated
+
+    boosters = []
+
+    if deficit > 0:
+        boosters.append("• 1 Banana (105 kcal)")
+        deficit -= 105
+
+    if deficit > 0:
+        boosters.append("• 250 ml Milk (150 kcal)")
+        deficit -= 150
+        
+        
+    protein_deficit = target_protein - total_protein
+
+    protein_boosters = []
+    
+    if protein_deficit > 0:
+        protein_boosters.append("• 2 Boiled Eggs (+12 gm protein)")
+        protein_deficit -= 12
+
+    if protein_deficit > 0:
+        protein_boosters.append("• 200 g Curd (+10 gm protein)")
+        protein_deficit -= 10
+
+    if protein_deficit > 0:
+        protein_boosters.append("• 150 g Chicken Breast (+30 gm protein)")
+
+        correction = "\n\n⚡ **Calorie Adjustment Added Automatically**\n"
+        correction += "To meet daily energy needs, add:\n"
+        correction += "\n".join(boosters)
+
+    final_text= plan_text + correction
+    
+    return final_text
+
 
 # --- 3. MULTI-AGENT ENGINE ---
 
@@ -664,12 +735,14 @@ def generate_plan_workflow(email, age, weight, height, gender, act, goal, durati
         2. 🛍️ SHOPPING LIST
         3. 📅 DAILY MEAL PLAN
         4. 🔢 Total calculations of the micros and macros
-            (!!!VERY VERY VERY IMPORTANT: calculations of the daily calories should strictly reach {target_cals}, but that does not mean to make wrong calculation to make it reach!!!)
+            (IMPORTANT: Your calorie calculations will be programmatically verified. 
+            If under {target_cals}, the system will auto-correct. Be accurate.)
             - Day 1:
                 - Breakfast: [Dish] ([Quantity])
                 - Lunch: Xcalories, Ygm protein, etc...
                 - Dinner: Xcalories, Ygm protein, etc...
                 - Snacks: should be healthy and not repetative regularly
+                - #Total: X calories, Y gm protein, Z gm carbs, W gm fats for that day
         5. 💰 TOTAL COST
             (Display a warning about prices are not so accurate it may vary in real world)
             IMPORTANT: Include the total cost in this EXACT format at the end:
@@ -678,6 +751,8 @@ def generate_plan_workflow(email, age, weight, height, gender, act, goal, durati
         6.  FINAL VERDICT (it should be about meal and give message to consult a doctor if needed)
         """
         final_output = run_agent("Manager Agent", "You are a Helpful Assistant.", manager_prompt)
+        
+        final_output = enforce_minimum_calories(final_output, target_cals, tpro)
         
         status.update(label="✅ Strategy Finalized!", state="complete", expanded=True)
 
