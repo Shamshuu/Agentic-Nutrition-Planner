@@ -174,64 +174,6 @@ CAL_DB = {
     "oats_50g": 190
 }
 
-# def enforce_minimum_calories(plan_text, target_cals, target_protein):
-#     """
-#     Lightweight calorie correction.
-#     Adds safe calorie boosters if plan is under target.
-#     """
-#     match = re.search(r"Total:\s*(\d+)\s*kcal", plan_text)
-#     if match:
-#         estimated = int(match.group(1))
-#     else:
-#         # Fallback if total is missing
-#         estimated = target_cals
-        
-#     protein_match = re.search(r"Total:\s*\d+\s*kcal,\s*(\d+)\s*gm protein", plan_text, re.IGNORECASE)
-
-#     if protein_match:
-#         total_protein = int(protein_match.group(1))
-#     else:
-#         total_protein = target_protein
-
-#     if estimated >= target_cals:
-#         return plan_text  # already acceptable
-
-#     deficit = target_cals - estimated
-
-#     boosters = []
-
-#     if deficit > 0:
-#         boosters.append("• 1 Banana (105 kcal)")
-#         deficit -= 105
-
-#     if deficit > 0:
-#         boosters.append("• 250 ml Milk (150 kcal)")
-#         deficit -= 150
-        
-        
-#     protein_deficit = target_protein - total_protein
-
-#     protein_boosters = []
-    
-#     if protein_deficit > 0:
-#         protein_boosters.append("• 2 Boiled Eggs (+12 gm protein)")
-#         protein_deficit -= 12
-
-#     if protein_deficit > 0:
-#         protein_boosters.append("• 200 g Curd (+10 gm protein)")
-#         protein_deficit -= 10
-
-#     if protein_deficit > 0:
-#         protein_boosters.append("• 150 g Chicken Breast (+30 gm protein)")
-
-#         correction = "\n\n⚡ **Calorie Adjustment Added Automatically**\n"
-#         correction += "To meet daily energy needs, add:\n"
-#         correction += "\n".join(boosters)
-
-#     final_text= plan_text + correction
-    
-#     return final_text
-
 
 # --- 3. MULTI-AGENT ENGINE ---
 
@@ -317,6 +259,33 @@ def extract_calories(plan_text: str) -> int:
     # --------------------------------------------------
     # 4️⃣ LAST RESORT
     # --------------------------------------------------
+    return 0
+
+def extract_protein(plan_text: str) -> int:
+    """
+    Extract total daily protein from meal plan.
+    Looks for patterns like "Total: XXg protein" or "Day X Total: ... XXg protein"
+    """
+    if not plan_text or not isinstance(plan_text, str):
+        return 0
+    
+    text = plan_text.lower()
+    
+    # Pattern 1: Explicit daily total
+    patterns = [
+        r"day \d+ total.*?(\d+)\s*g(?:m)?\s*protein",
+        r"#\s*total.*?(\d+)\s*g(?:m)?\s*protein",
+        r"total.*?(\d+)\s*g(?:m)?\s*protein",
+    ]
+    
+    for pattern in patterns:
+        match = re.search(pattern, text)
+        if match:
+            try:
+                return int(match.group(1))
+            except ValueError:
+                pass
+    
     return 0
 
 def detect_user_intent(user_message, chat_history, has_pending_plan):
@@ -657,17 +626,42 @@ def generate_plan_workflow(email, age, weight, height, gender, act, goal, durati
         {request_analysis["reasoning"]}
         """
         
+        breakfast_cals = int(target_cals * 0.30)  # 30% for breakfast
+        lunch_cals = int(target_cals * 0.40)      # 40% for lunch
+        dinner_cals = int(target_cals * 0.25)     # 25% for dinner
+        snack_cals = target_cals - (breakfast_cals + lunch_cals + dinner_cals)  # Remaining for snacks
+
+        # Calculate protein distribution per meal
+        breakfast_protein = int(tpro * 0.25)  # 25% for breakfast
+        lunch_protein = int(tpro * 0.35)      # 35% for lunch
+        dinner_protein = int(tpro * 0.30)     # 30% for dinner
+        snack_protein = tpro - (breakfast_protein + lunch_protein + dinner_protein)  # Remaining for snacks
+        
         chef_prompt = f"""
         Cuisine: {u_data[13]}. Diet: {u_data[10]}. Allergies: {u_data[12]}.
 
-        The user explicitly requested **{meals_per_day} MEALS PER DAY**.
-        You must split the diet into exactly {meals_per_day} distinct meals.
-        
-        CRITICAL INSTRUCTION:
-        1. DO NOT suggest single items (e.g., just "Roti").
-        2. Suggest COMPLETE MEALS. 
-            - Example: "2 Rotis + Palak Paneer + Cucumber Salad + 1 Glass of Milk".
-        3. Mandatory:Ensure High Variety! Make sure to include a variety of items in the plan.
+        ***MANDATORY CALORIE & PROTEIN TARGETS (NON-NEGOTIABLE):***
+        You MUST design meals that hit these EXACT targets:
+
+        📊 DAILY TARGET: {target_cals} kcal | {tpro}g protein
+
+        PER-MEAL BREAKDOWN (THIS IS YOUR CONTRACT):
+        - Breakfast: {breakfast_cals} kcal, {breakfast_protein}g protein
+        - Lunch: {lunch_cals} kcal, {lunch_protein}g protein  
+        - Dinner: {dinner_cals} kcal, {dinner_protein}g protein
+        - Snacks: {snack_cals} kcal, {snack_protein}g protein
+
+        DESIGN RULES:
+        1. Each meal MUST be a COMPLETE combination (e.g., "2 Rotis + 150g Paneer Curry + Cucumber Salad + 200ml Milk")
+        2. Calculate approximate calories as you design (use common food databases mentally)
+        3. Choose quantities that naturally reach the calorie target (more rice/roti for calories, more protein sources for protein)
+        4. The user has {meals_per_day} meals per day - split accordingly
+        5. Ensure HIGH VARIETY across {duration} days
+
+        EXAMPLE THOUGHT PROCESS:
+        "For 840 kcal breakfast with 30g protein, I'll suggest:
+        - 3 Rotis (330 kcal) + 2 Boiled Eggs (140 kcal) + 250ml Milk (150 kcal) + 1 Banana (105 kcal) + 30g Peanuts (170 kcal)
+        Total: ~895 kcal, 35g protein ✓"
         
         {analysis_summary}
         {cost_guidance}
@@ -762,24 +756,37 @@ def generate_plan_workflow(email, age, weight, height, gender, act, goal, durati
         3. Market Rates: Eggs ₹7, Milk ₹32/500ml, Chicken ₹280/kg, Paneer ₹100/200g, Veg ₹40-60/kg.
         (use these items as only reference and not as you only have these items in the market, you can use wide range of items as well, but only healthy and nutritious items)
         
-        CRITICAL INSTRUCTION:
-        Every single item in the daily plan MUST HAVE A QUANTITY.
-        - BAD: "display only items"
-        - GOOD: "display items with quantities"
+        CRITICAL NUTRITION VALIDATION:
+        Before finalizing, VERIFY your plan meets these targets:
+        - Daily Total: {target_cals} kcal (±50 kcal tolerance)
+        - Daily Protein: {tpro}g (±10g tolerance)
+
+        VERIFICATION PROCESS:
+        1. List each meal's calories and protein
+        2. Sum them up for the day
+        3. If UNDER target: Add calorie-dense items (nuts, banana, milk, extra roti)
+        4. If OVER target: Reduce portion sizes slightly
+        5. Output final totals in this EXACT format:
+        #Total: XXXX kcal, XXg protein
+
+        QUANTITY REQUIREMENTS:
+        Every single item MUST have a specific quantity:
+        - ✅ CORRECT: "3 Rotis (330 kcal)", "150g Chicken (250 kcal)", "250ml Milk (150 kcal)"
+        - ❌ WRONG: "Rotis", "Chicken", "Milk"
 
         ***EXTREMELY IMPORTANT - COST CALCULATION:*** 
-            {f"TARGET COST: ₹{request_analysis['cost_target']} - Your final cost MUST be approximately ₹{request_analysis['cost_target']} (within ₹50 range)" if request_analysis["cost_target"] else "Calculate the total cost accurately based on all ingredients and quantities"}
-            
-            At the very end of your response, output the total cost in this EXACT format:
-            ### TOTAL_COST: 1500 ###
-            (Replace 1500 with your calculated number. Only digits. No other text in this line.)
-            
-            COST CALCULATION PROCESS:
-            1. List ALL ingredients needed for {duration} days
-            2. Calculate quantity needed for each ingredient
-            3. Multiply quantity × market rate for each item
-            4. Sum ALL costs to get total
-            5. {f"VERIFY: Total should be approximately ₹{request_analysis['cost_target']}. If not, adjust quantities and recalculate." if request_analysis["cost_target"] else "Double-check your math"}
+        {f"TARGET COST: ₹{request_analysis['cost_target']} - Your final cost MUST be approximately ₹{request_analysis['cost_target']} (within ₹50 range)" if request_analysis["cost_target"] else "Calculate the total cost accurately based on all ingredients and quantities"}
+        
+        At the very end of your response, output the total cost in this EXACT format:
+        ### TOTAL_COST: 1500 ###
+        (Replace 1500 with your calculated number. Only digits. No other text in this line.)
+        
+        COST CALCULATION PROCESS:
+        1. List ALL ingredients needed for {duration} days
+        2. Calculate quantity needed for each ingredient
+        3. Multiply quantity × market rate for each item
+        4. Sum ALL costs to get total
+        5. {f"VERIFY: Total should be approximately ₹{request_analysis['cost_target']}. If not, adjust quantities and recalculate." if request_analysis["cost_target"] else "Double-check your math"}
         
         Task:
         1. Create a CONSOLIDATED GROCERY LIST for {duration} days.
@@ -810,39 +817,6 @@ def generate_plan_workflow(email, age, weight, height, gender, act, goal, durati
             agent_persona,
             budget_prompt
         )
-
-        # ---------- CALORIE CORRECTION LOOP ----------
-        for attempt in range(MAX_RETRIES):
-            total_calories = extract_calories(plan_text)
-            gap = target_cals - total_calories
-
-            # Acceptable range
-            if abs(gap) <= CAL_TOLERANCE:
-                break
-
-            correction_prompt = f"""
-            You generated the following meal plan:
-
-            {plan_text}
-
-            CALORIE CHECK FAILED:
-            - Current total calories: {total_calories}
-            - Target calories: {target_cals}
-            - Difference: {gap} kcal
-
-            TASK:
-            - DO NOT redesign the plan
-            - ONLY adjust quantities OR add/remove 1–2 simple foods
-            - Keep meals realistic and affordable
-            - Return the FULL corrected meal plan
-            - Ensure final calories are within ±{CAL_TOLERANCE} kcal
-            """
-
-            plan_text = run_agent(
-                "Calorie Correction Agent",
-                "You are correcting a meal plan to meet calorie targets accurately.",
-                correction_prompt
-            )
             
         
         cost_match = re.search(r"###\s*TOTAL_COST:\s*([\d,]+)", plan_text)
@@ -867,23 +841,75 @@ def generate_plan_workflow(email, age, weight, height, gender, act, goal, durati
             - Daily required protein for user to reach goal:{tpro}
         2. 🛍️ SHOPPING LIST
         3. 📅 DAILY MEAL PLAN
-        4. 🔢 Total calculations of the micros and macros
-            (IMPORTANT: Your calorie calculations will be programmatically verified. 
-            If under {target_cals}, the system will auto-correct. Be accurate.)
-            - Day 1:
-                - Breakfast: [Dish] ([Quantity])
-                - Lunch: Xcalories, Ygm protein, etc...
-                - Dinner: Xcalories, Ygm protein, etc...
-                - Snacks: should be healthy and not repetative regularly
-                - #Total: X calories, Y gm protein, Z gm carbs, W gm fats for that day
-        5. 💰 TOTAL COST
-            (Display a warning about prices are not so accurate it may vary in real world)
-            IMPORTANT: Include the total cost in this EXACT format at the end:
-            # Total Budget For Plan: [₹number] 
-            (e.g., ### Total Budget For Plan: [₹number] ###)
+        4. 📅 DAILY MEAL PLAN (Day 1 to Day {duration})
+            FORMAT FOR EACH DAY:
+            
+            **Day X:**
+            
+            🌅 Breakfast ({breakfast_cals} kcal target):
+            - [Complete meal with quantities]
+            - Estimated: XXX kcal, XXg protein, XXg carbs, XXg fats
+            
+            🌞 Lunch ({lunch_cals} kcal target):
+            - [Complete meal with quantities]
+            - Estimated: XXX kcal, XXg protein, XXg carbs, XXg fats
+            
+            🌙 Dinner ({dinner_cals} kcal target):
+            - [Complete meal with quantities]
+            - Estimated: XXX kcal, XXg protein, XXg carbs, XXg fats
+            
+            🍎 Snacks ({snack_cals} kcal target):
+            - [Healthy snack with quantity]
+            - Estimated: XXX kcal, XXg protein, XXg carbs, XXg fats
+            
+            📊 Day X Total: XXXX kcal, XXg protein, XXg carbs, XXg fats
+            
+            CRITICAL: The sum of all meals should approximately equal:
+            - Target: {target_cals} kcal, {tpro}g protein
+            - Acceptable range: {target_cals - 50} to {target_cals + 50} kcal
+
+        5. 🔢 OVERALL SUMMARY
+            - Total Duration: {duration} days
+            - Average Daily Calories: Should be ~{target_cals} kcal
+            - Average Daily Protein: Should be ~{tpro}g
+                5. 💰 TOTAL COST
+                    (Display a warning about prices are not so accurate it may vary in real world)
+                    IMPORTANT: Include the total cost in this EXACT format at the end:
+                    # Total Budget For Plan: [₹number] 
+                    (e.g., ### Total Budget For Plan: [₹number] ###)
         6.  FINAL VERDICT (it should be about meal and give message to consult a doctor if needed)
         """
         final_output = run_agent("Manager Agent", "You are a Helpful Assistant.", plan_text + "\n\n" + manager_prompt)
+        
+        st.write("🔬 Validation Agent: Verifying Nutrition Targets...")
+        
+        extracted_cals = extract_calories(final_output)
+        
+        # Extract protein (add this helper function)
+        protein_match = re.search(r"(?:Day \d+ Total|#Total).*?(\d+)\s*g\s*protein", final_output, re.IGNORECASE)
+        extracted_protein = int(protein_match.group(1)) if protein_match else 0
+        
+        cal_gap = target_cals - extracted_cals
+        protein_gap = tpro - extracted_protein
+        
+        validation_status = "✅ PASS"
+        validation_notes = []
+        
+        if abs(cal_gap) > 100:
+            validation_status = "⚠️ WARNING"
+            validation_notes.append(f"Calories are {abs(cal_gap)} kcal {'under' if cal_gap > 0 else 'over'} target")
+        
+        if abs(protein_gap) > 20:
+            validation_status = "⚠️ WARNING"
+            validation_notes.append(f"Protein is {abs(protein_gap)}g {'under' if protein_gap > 0 else 'over'} target")
+        
+        if validation_notes:
+            final_output += f"\n\n⚠️ **Nutrition Validation Alert:**\n"
+            for note in validation_notes:
+                final_output += f"- {note}\n"
+            final_output += "\n💡 *Tip: You can regenerate the plan or manually adjust portion sizes.*"
+        
+        st.write(f"{validation_status} Nutrition Validation Complete")
         
         
         # final_output = enforce_minimum_calories(final_output, target_cals, tpro)
@@ -924,12 +950,12 @@ def generate_plan_workflow(email, age, weight, height, gender, act, goal, durati
         st.session_state['current_strategy'] = final_output
         st.session_state['total_budget'] = extracted_cost
         st.session_state["agent_memory"]["tabs"]["tab1"].update({
-            "current_plan": final_plan,
+            "current_plan": final_output,
             "plan_duration": duration,
             "budget": extracted_cost,
             "last_feedback": feedback
         })
-        st.session_state["agent_memory"]["global"]["approved_plans"].append(final_plan)
+        st.session_state["agent_memory"]["global"]["approved_plans"].append(final_output)
 
     return final_output, final_cost
 
@@ -1397,7 +1423,7 @@ else:
     else:
         # Display Chat History
         if st.session_state['live_chat']:
-            with st.expander("💬 Chat History", expanded=False):
+            with st.expander("💬 Chat History", expanded=True):
                 st.markdown('<div class="chat-scroll">', unsafe_allow_html=True)
 
                 for msg in st.session_state['live_chat']:
@@ -1612,40 +1638,62 @@ else:
             if intent == "GENERAL_QUESTION":
                 # General Chat (Ingredients, Doubts, Etc.)
                 # 1. Check if there is a PROPOSED (Pending) Plan on screen
-                pending_plan = st.session_state.get('pending_plan')
-                
-                # 2. Check if there is a HISTORIC (Approved) Plan in DB
+                active_tab = st.session_state.get("active_tab", "tab1")
+
+                pending_plan = st.session_state.get("pending_plan")
                 approved_plan = get_latest_approved_context(u_data[0])
-                
-                # 3. Construct the Context based on Priority
-                if pending_plan:
-                    # PRIORITY: User is likely asking about the plan currently on screen
+
+                if active_tab == "tab2":
+                    # USER IS IN VISUAL TRACKER → IMAGE CONTEXT FIRST
+                    plan_context = """
+                    USER IS CURRENTLY IN FOOD DIARY / IMAGE ANALYSIS MODE.
+                    Focus on the most recent food image analysis and its implications.
+                    Do NOT prioritize meal plans unless explicitly asked.
+                    """
+                elif pending_plan:
+                    # USER IS IN TAB1 OR TAB3 WITH A PLAN ON SCREEN
                     plan_context = f"""
-                    CURRENT STATUS: User has a generated PROPOSED STRATEGY on screen (Not yet approved).
-                    FOCUS: Answer questions specific to this PROPOSED plan.
-                    
-                    DETAILS OF PROPOSED PLAN:
-                    {pending_plan[:2500]}... [truncated for length]
+                    CURRENT STATUS: User has a PROPOSED STRATEGY on screen (Not yet approved).
+                    Focus on answering questions about THIS plan.
+
+                    DETAILS:
+                    {pending_plan[:2500]}...
                     """
                 else:
-                    # FALLBACK: User is asking about their general diet history
                     plan_context = f"""
-                    CURRENT STATUS: No active plan on screen. Referring to last approved history.
+                    CURRENT STATUS: No active plan.
+                    Refer to last approved history.
+
                     LAST APPROVED PLAN:
                     {approved_plan[:1500]}...
                     """
 
+
                 # 4. Final Context String
                 memory = st.session_state.get("agent_memory", {})
-                food_logs = st.session_state['agent_memory'].get("food_diary", [])
+                food_logs = (
+                    st.session_state
+                    .get("agent_memory", {})
+                    .get("tabs", {})
+                    .get("tab2", {})
+                    .get("food_diary", [])
+                )
 
+                last_image = (
+                    st.session_state
+                    .get("agent_memory", {})
+                    .get("tabs", {})
+                    .get("tab2", {})
+                    .get("last_image_analysis")
+                )
+                
                 recent_food_log = ""
-                if food_logs:
-                    recent_entries = food_logs[-3:]  # last 3 meals only
-                    recent_food_log = "\n".join([
-                        f"- {f['timestamp']}: {f['analysis']} (🌍 {f.get('co2', 'N/A')} kg CO₂e)"
-                        for f in recent_entries
-                    ])
+                if last_image:
+                    recent_food_log = (
+                        f"- {last_image['timestamp']}: "
+                        f"{last_image['analysis']} "
+                        f"(🌍 {last_image.get('co2', 'N/A')} kg CO₂e)"
+                    )
                 else:
                     recent_food_log = "No food images analyzed yet."
 
@@ -1682,7 +1730,7 @@ else:
                 Score: {agent_memory.get("carbon_metrics", {}).get("score", "N/A")}
 
                 Food Diary:
-                {agent_memory.get("food_diary", [])}
+                {recent_food_log}
                 """
                 
                 # 5. Get Reply
@@ -1734,20 +1782,30 @@ else:
                     meal_co2 = estimate_food_carbon(analysis_result)
                     
                     # Update Agent Memory immediately so Chat can see it
-                    st.session_state["agent_memory"]["tabs"]["tab2"]["food_diary"].append({
+                    entry = {
                         "timestamp": datetime.datetime.now().isoformat(),
                         "analysis": analysis_result,
                         "co2": meal_co2
-                    })
+                    }
+
+                    tab2_memory = st.session_state["agent_memory"]["tabs"]["tab2"]
+
+                    tab2_memory["food_diary"].append(entry)
+                    tab2_memory["last_image_analysis"] = entry
+
 
             # --- Show analysis ---
             if st.session_state.get("food_analysis_done"):
                 st.info(st.session_state["food_analysis_result"])
                 
                 # Show carbon metric if available in memory
-                if st.session_state["agent_memory"]["food_diary"]:
-                    last_entry = st.session_state["agent_memory"]["food_diary"][-1]
-                    st.caption(f"🌍 Estimated Carbon Impact: {last_entry.get('co2', 0):.2f} kg CO₂e")
+                last_entry = st.session_state["agent_memory"]["tabs"]["tab2"].get("last_image_analysis")
+
+                if last_entry:
+                    st.caption(
+                        f"🌍 Estimated Carbon Impact: {last_entry.get('co2', 0):.2f} kg CO₂e"
+                    )
+
 
                 st.markdown("---")
 
@@ -1765,66 +1823,109 @@ else:
         )
 
         # --- CONTEXT BUILDER ---
-        # (This part is fine, keeping your existing logic)
         if analysis_mode == "Planned Meal (Strategy)":
             if 'current_strategy' not in st.session_state:
                 st.warning("⚠️ Please generate a Meal Plan in the 'Strategic Planner' tab first.")
                 st.stop()
+
             analysis_context = st.session_state['current_strategy']
             analysis_label = "PLANNED MEAL STRATEGY"
+
         else:
-            food_logs = st.session_state['agent_memory'].get("food_diary", [])
+            tab2_memory = st.session_state["agent_memory"]["tabs"]["tab2"]
+            food_logs = tab2_memory.get("food_diary", [])
+
             if not food_logs:
                 st.warning("⚠️ No food photos analyzed yet. Use the Visual Tracker first.")
                 st.stop()
+
             analysis_context = "\n".join([
-                f"- {f['analysis']} (Estimated CO₂: {f.get('co2', 'N/A')} kg)"
+                f"- {f['analysis']} (CO₂: {f.get('co2', 'N/A')} kg)"
                 for f in food_logs[-5:]
             ])
             analysis_label = "ACTUAL CONSUMED MEALS"
 
-        st.write(f"Analyze the environmental impact of **{analysis_label.lower()}**.")
+        st.caption(f"Analyzing **{analysis_label.lower()}**")
 
-        # --- FIX: Button logic ---
+        # --- PREVENT REDUNDANT ANALYSIS ---
+        tab3_memory = st.session_state["agent_memory"]["tabs"]["tab3"]
+        current_fingerprint = hash((analysis_mode, analysis_context))
+        last_fingerprint = tab3_memory.get("last_fingerprint")
+
         if st.button("🌱 Calculate Carbon Footprint"):
-            with st.status("♻️ Environmental Analyst is auditing...", expanded=True):
-                # ... (Your existing prompt construction logic) ...
-                eco_prompt = f"""
-                You are an Environmental Scientist. Analyze: {analysis_context}
-                TASK: Estimate Carbon Footprint (kg CO2e) and Score (0-100).
-                OUTPUT FORMAT: ### CO2: 12.5 ### ### SCORE: 75 ###
-                """
-                
-                eco_report = run_agent("Environmental Analyst", "You are a precise scientist.", eco_prompt)
+            if last_fingerprint == current_fingerprint:
+                st.info("ℹ️ No change detected. Showing previous analysis.")
+            else:
+                with st.status("♻️ Environmental Analyst is auditing...", expanded=True):
 
-                # Extract
-                co2_match = re.search(r"###\s*CO2:\s*([\d\.]+)", eco_report)
-                score_match = re.search(r"###\s*SCORE:\s*([\d]+)", eco_report)
-                est_co2 = float(co2_match.group(1)) if co2_match else 0.0
-                sust_score = int(score_match.group(1)) if score_match else 50
-                clean_report = re.sub(r"###.*?###", "", eco_report).strip()
+                    eco_prompt = f"""
+                    You are an Environmental Scientist.
 
-                # --- STORE PERSISTENTLY ---
-                st.session_state["agent_memory"]["tabs"]["tab3"].update({
-                    "carbon_metrics": {"co2": est_co2, "score": sust_score},
-                    "carbon_report": clean_report,
-                    "analysis_source": analysis_mode
-                })
+                    Analyze the following food data:
+                    {analysis_context}
 
-        # --- DISPLAY FROM MEMORY (Not just local variables) ---
-        # This ensures it persists when you chat!
-        metrics = st.session_state['agent_memory'].get("carbon_metrics")
-        report = st.session_state['agent_memory'].get("carbon_report")
+                    TASKS:
+                    1. Estimate total carbon footprint (kg CO2e)
+                    2. Assign a sustainability score (0–100)
 
-        if metrics and report:
-            st.subheader(f"📊 Impact Dashboard — {metrics['source']}")
+                    OUTPUT FORMAT (STRICT):
+                    ### CO2: 12.5 ###
+                    ### SCORE: 75 ###
+                    <short explanation>
+                    """
+
+                    eco_report = run_agent(
+                        "Environmental Analyst",
+                        "You are a precise environmental scientist.",
+                        eco_prompt
+                    )
+
+                    co2_match = re.search(r"###\s*CO2:\s*([\d\.]+)", eco_report)
+                    score_match = re.search(r"###\s*SCORE:\s*([\d]+)", eco_report)
+
+                    est_co2 = float(co2_match.group(1)) if co2_match else 0.0
+                    sust_score = int(score_match.group(1)) if score_match else 50
+
+                    clean_report = re.sub(r"###.*?###", "", eco_report).strip()
+
+                    # --- SHORT SUMMARY ---
+                    summary = (
+                        "Low impact 🌱" if sust_score >= 70 else
+                        "Moderate impact ⚠️" if sust_score >= 40 else
+                        "High impact 🚨"
+                    )
+
+                    tab3_memory.update({
+                        "carbon_metrics": {
+                            "co2": est_co2,
+                            "score": sust_score
+                        },
+                        "carbon_report": clean_report,
+                        "analysis_source": analysis_mode,
+                        "summary": summary,
+                        "last_fingerprint": current_fingerprint
+                    })
+
+        # --- DISPLAY FROM MEMORY ---
+        metrics = tab3_memory.get("carbon_metrics")
+        report = tab3_memory.get("carbon_report")
+        source = tab3_memory.get("analysis_source")
+        summary = tab3_memory.get("summary")
+
+        if metrics:
+            st.subheader(f"📊 Impact Dashboard — {source}")
+
             m1, m2, m3 = st.columns(3)
-            m1.metric("Est. Carbon Emissions", f"{metrics['co2']:.2f} kg CO2e")
+            m1.metric("Est. Carbon Emissions", f"{metrics['co2']:.2f} kg CO₂e")
             m2.metric("Equivalent Car Travel", f"{metrics['co2'] * 4:.1f} km")
             m3.metric("Trees Needed to Offset", f"{metrics['co2'] / 20:.1f} trees/year")
-            
+
             st.progress(metrics['score'] / 100)
             st.caption(f"Sustainability Score: {metrics['score']}/100")
-            
-            st.markdown("### 📝 Scientist's Report")
-            st.write(report)
+
+            if summary:
+                st.success(f"**Summary:** {summary}")
+
+            if report:
+                with st.expander("📝 Scientist’s Explanation", expanded=True):
+                    st.write(report)
