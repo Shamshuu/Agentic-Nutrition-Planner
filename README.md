@@ -1,7 +1,7 @@
 # 🥗 Agentic Nutrition Planner  
 **AI-Powered Personalized Meal Planning & Sustainability Analysis System*
 
-**For Evaluation, please refer the latest code or lastlty committed version, if there are any errors*
+**For Evaluation, please refer the latest code or lastly committed version, if there are any errors*
 
 
 ---
